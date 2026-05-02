@@ -90,6 +90,7 @@ export interface Rite {
   chaosLootIds: Record<string, string>;
   revisionLootIds: Record<string, string>;
   trollVerdicts: Record<string, TrollVerdict>;
+  weaverLootId?: string;
   ogreLootId?: string;
   winnerLootId?: string;
   outcome: "winner" | "ogre_fallback" | "all_failed";

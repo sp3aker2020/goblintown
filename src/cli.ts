@@ -385,6 +385,10 @@ function formatRiteStep(s: RiteStep): string {
       return `  troll reviewing...`;
     case "review:verdict":
       return `    troll: ${s.verdict.passed ? "PASS" : "FAIL"} score=${s.verdict.score.toFixed(2)} (${s.verdict.lootId})`;
+    case "weaver:start":
+      return `  pack failed; weaver synthesizing a combined draft...`;
+    case "weaver:done":
+      return `    weaver → ${s.weaverId}`;
     case "fallback:start":
       return `  pack failed; summoning ogre...`;
     case "fallback:done":

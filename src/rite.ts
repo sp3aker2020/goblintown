@@ -8,6 +8,7 @@ import { shinies, informedShinies } from "./reward.js";
 import { scavenge } from "./scavenge.js";
 import { chaosPass } from "./chaos.js";
 import { reviseGoblin } from "./revise.js";
+import { synthesizePack } from "./weaver.js";
 import { packVariant } from "./pack-prompt.js";
 import { trollReview } from "./troll-review.js";
 import { ogreFallback } from "./fallback.js";
@@ -44,6 +45,8 @@ export type RiteStep =
   | { kind: "chaos:done"; goblinId: string; gremlinId: string }
   | { kind: "revision:start"; round: number }
   | { kind: "revision:done"; goblinId: string }
+  | { kind: "weaver:start" }
+  | { kind: "weaver:done"; weaverId: string }
   | { kind: "review:start" }
   | { kind: "review:verdict"; verdict: TrollVerdict }
   | { kind: "fallback:start" }
@@ -280,7 +283,7 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
   }
 
   const passed = currentGoblinLoot.filter((g) => rite.trollVerdicts[g.id]?.passed);
-  let winnerLoot: Loot;
+  let winnerLoot: Loot | undefined;
 
   if (passed.length > 0) {
     winnerLoot = passed.reduce((best, cur) =>
@@ -288,34 +291,96 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
     );
     rite.winnerLootId = winnerLoot.id;
     rite.outcome = "winner";
-  } else if (opts.noFallback || !checkBudget("fallback")) {
-    winnerLoot = goblinLoot.reduce((best, cur) =>
-      (cur.reward ?? 0) > (best.reward ?? 0) ? cur : best,
-    );
-    rite.winnerLootId = winnerLoot.id;
-    rite.outcome = "all_failed";
   } else {
-    onStep({ kind: "fallback:start" });
-    const ogreLoot = await ogreFallback({
-      task: opts.task,
-      goblinLoot,
-      trollVerdicts: rite.trollVerdicts,
-      chaosByGoblinId: Object.fromEntries(chaosByGoblinId),
-      hoard: opts.hoard,
-      riteId,
-    });
-    budget.charge(ogreLoot.usage);
-    rite.ogreLootId = ogreLoot.id;
-    rite.winnerLootId = ogreLoot.id;
-    rite.outcome = "ogre_fallback";
-    allLoot.push(ogreLoot);
-    winnerLoot = ogreLoot;
-    onStep({ kind: "fallback:done", lootId: ogreLoot.id });
+    // Pack failed. Try Weaver synthesis.
+    let weaverPassed = false;
+    if (!opts.noFallback && checkBudget("weaver")) {
+      onStep({ kind: "weaver:start" });
+      const failedVerdicts: Record<string, TrollVerdict> = {};
+      for (const g of currentGoblinLoot) {
+        if (rite.trollVerdicts[g.id]) failedVerdicts[g.id] = rite.trollVerdicts[g.id];
+      }
+      const weaverLoot = await synthesizePack({
+        failedDrafts: currentGoblinLoot,
+        trollVerdicts: failedVerdicts,
+        originalTask: opts.task,
+        hoard: opts.hoard,
+        riteId,
+        personality: opts.personality,
+      });
+      budget.charge(weaverLoot.usage);
+      rite.weaverLootId = weaverLoot.id;
+      allLoot.push(weaverLoot);
+      onStep({ kind: "weaver:done", weaverId: weaverLoot.id });
+
+      if (checkBudget("review")) {
+        const { verdict, trollLoot, chaosClassification } = await trollReview({
+          goblinLoot: weaverLoot,
+          originalTask: opts.task,
+          hoard: opts.hoard,
+          riteId,
+          personality: opts.personality,
+        });
+        budget.charge(trollLoot.usage);
+        rite.trollVerdicts[weaverLoot.id] = verdict;
+        weaverLoot.reward = customRewardFn
+          ? customRewardFn(weaverLoot, verdict)
+          : informedShinies(weaverLoot, verdict, chaosClassification);
+        await opts.hoard.stash(weaverLoot);
+        allLoot.push(trollLoot);
+        onStep({ kind: "review:verdict", verdict });
+
+        if (verdict.passed) {
+          winnerLoot = weaverLoot;
+          rite.winnerLootId = winnerLoot.id;
+          rite.outcome = "winner";
+          weaverPassed = true;
+        } else {
+          // Keep track of the best failed loot in case we don't fall back to Ogre
+          winnerLoot = currentGoblinLoot.reduce((best, cur) =>
+            (cur.reward ?? 0) > (best.reward ?? 0) ? cur : best,
+          );
+          if (weaverLoot.reward && weaverLoot.reward > (winnerLoot.reward ?? 0)) {
+              winnerLoot = weaverLoot;
+          }
+        }
+      }
+    }
+
+    if (!weaverPassed) {
+      if (opts.noFallback || !checkBudget("fallback")) {
+        // If we haven't picked a best failed loot yet
+        if (!winnerLoot) {
+          winnerLoot = currentGoblinLoot.reduce((best, cur) =>
+            (cur.reward ?? 0) > (best.reward ?? 0) ? cur : best,
+          );
+        }
+        rite.winnerLootId = winnerLoot.id;
+        rite.outcome = "all_failed";
+      } else {
+        onStep({ kind: "fallback:start" });
+        const ogreLoot = await ogreFallback({
+          task: opts.task,
+          goblinLoot,
+          trollVerdicts: rite.trollVerdicts,
+          chaosByGoblinId: Object.fromEntries(chaosByGoblinId),
+          hoard: opts.hoard,
+          riteId,
+        });
+        budget.charge(ogreLoot.usage);
+        rite.ogreLootId = ogreLoot.id;
+        rite.winnerLootId = ogreLoot.id;
+        rite.outcome = "ogre_fallback";
+        allLoot.push(ogreLoot);
+        onStep({ kind: "fallback:done", lootId: ogreLoot.id });
+        winnerLoot = ogreLoot;
+      }
+    }
   }
 
   rite.finishedAt = Date.now();
   await opts.hoard.stashRite(rite);
   onStep({ kind: "rite:done", outcome: rite.outcome });
 
-  return { rite, winnerLoot, allLoot };
+  return { rite, winnerLoot: winnerLoot!, allLoot };
 }
