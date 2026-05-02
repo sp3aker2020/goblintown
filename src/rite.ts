@@ -4,7 +4,7 @@ import { makeGoblin } from "./creatures.js";
 import { variantForPackIndex } from "./goblin-variants.js";
 import { measureDrift } from "./drift.js";
 import { callCreature } from "./openai-client.js";
-import { shinies } from "./reward.js";
+import { shinies, informedShinies } from "./reward.js";
 import { scavenge } from "./scavenge.js";
 import { chaosPass } from "./chaos.js";
 import { packVariant } from "./pack-prompt.js";
@@ -185,10 +185,10 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
 
   // sequential so console output stays in pack order
   onStep({ kind: "review:start" });
-  const rewardFn = opts.rewardFn ?? shinies;
+  const customRewardFn = opts.rewardFn;
   for (const g of goblinLoot) {
     if (!checkBudget("review")) break;
-    const { verdict, trollLoot } = await trollReview({
+    const { verdict, trollLoot, chaosClassification } = await trollReview({
       goblinLoot: g,
       originalTask: opts.task,
       chaosLoot: chaosByGoblinId.get(g.id),
@@ -197,7 +197,10 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
     });
     budget.charge(trollLoot.usage);
     rite.trollVerdicts[g.id] = verdict;
-    g.reward = rewardFn(g, verdict);
+    // Use informedShinies (chaos-aware) by default; custom plugins get plain call
+    g.reward = customRewardFn
+      ? customRewardFn(g, verdict)
+      : informedShinies(g, verdict, chaosClassification);
     await opts.hoard.stash(g);
     allLoot.push(trollLoot);
     onStep({ kind: "review:verdict", verdict });
