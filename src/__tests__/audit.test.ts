@@ -95,6 +95,7 @@ describe("auditRite", () => {
       contextLootId: ra,
       goblinLootIds: [ga],
       chaosLootIds: { [ga]: gra },
+      revisionLootIds: {},
       trollVerdicts: {
         [ga]: { lootId: ga, passed: true, score: 0.8, critique: "ok" },
       },
@@ -135,6 +136,7 @@ describe("auditRite", () => {
       personality: "nerdy",
       goblinLootIds: [goblinId],
       chaosLootIds: {},
+      revisionLootIds: {},
       trollVerdicts: {},
       outcome: "ogre_fallback",
       startedAt: 0,
@@ -157,15 +159,16 @@ describe("collectRiteLootIds", () => {
       scanGlobs: [],
       packSize: 2,
       personality: "nerdy",
-      contextLootId: "ctx",
-      goblinLootIds: ["g1", "g2", "g1"],
-      chaosLootIds: { g1: "x1", g2: "x2" },
+      contextLootId: "ctx1",
+      goblinLootIds: ["g1", "g2"],
+      chaosLootIds: { g1: "c1", g2: "c2" },
+      revisionLootIds: {},
       ogreLootId: "o1",
       trollVerdicts: {},
       outcome: "ogre_fallback",
       startedAt: 0,
     };
     const ids = collectRiteLootIds(r);
-    assert.deepEqual(new Set(ids), new Set(["ctx", "g1", "g2", "x1", "x2", "o1"]));
+    assert.deepEqual(new Set(ids), new Set(["ctx1", "g1", "g2", "c1", "c2", "o1"]));
   });
 });

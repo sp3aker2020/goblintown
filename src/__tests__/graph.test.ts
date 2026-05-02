@@ -76,6 +76,7 @@ describe("renderRiteGraph", () => {
       contextLootId: ra,
       goblinLootIds: [g1, g2],
       chaosLootIds: { [g1]: x1, [g2]: x2 },
+      revisionLootIds: {},
       ogreLootId: og,
       trollVerdicts: {
         [g1]: { lootId: g1, passed: false, score: 0.3, critique: "" },

@@ -46,7 +46,7 @@ Usage:
   goblintown quest "<task>" [--pack <N>] [--personality <p>]
       Goblin pack with Troll arbitration. Default pack=3. Lightweight.
 
-  goblintown rite "<task>" [--pack <N>] [--scan <glob>]... [--personality <p>] [--no-fallback]
+  goblintown rite "<task>" [--pack <N>] [--revisions <N>] [--scan <glob>]... [--personality <p>] [--no-fallback]
                           [--budget <tokens>] [--max-output <tokens>]
       Full ceremony: Raccoon → Goblin pack → Gremlin chaos → Troll review → Ogre fallback.
 
@@ -299,7 +299,7 @@ async function cmdRite(args: string[]): Promise<void> {
   const task = positional[0];
   if (!task) {
     process.stderr.write(
-      `usage: goblintown rite "<task>" [--pack <N>] [--scan <glob>]... [--personality <p>] [--no-fallback] [--budget <tokens>] [--max-output <tokens>]\n`,
+      `usage: goblintown rite "<task>" [--pack <N>] [--revisions <N>] [--scan <glob>]... [--personality <p>] [--no-fallback] [--budget <tokens>] [--max-output <tokens>]\n`,
     );
     process.exitCode = 1;
     return;
@@ -307,6 +307,7 @@ async function cmdRite(args: string[]): Promise<void> {
   const flags = parseFlags(args);
   const scanGlobs = collectFlag(args, "scan");
   const packSize = flags.pack ? Number(flags.pack) : 3;
+  const revisions = flags.revisions ? Number(flags.revisions) : undefined;
   const personality = flags.personality as Personality | undefined;
   const noFallback = flags["no-fallback"] === "true";
   const budgetTokens = flags.budget ? Number(flags.budget) : undefined;
@@ -320,7 +321,7 @@ async function cmdRite(args: string[]): Promise<void> {
     process.stdout.write(`(reward plugin: ${rewardPlugin.source})\n`);
   }
   process.stdout.write(
-    `Beginning rite (pack=${packSize}, scan=${scanGlobs.length} glob(s)` +
+    `Beginning rite (pack=${packSize}, revisions=${revisions ?? 0}, scan=${scanGlobs.length} glob(s)` +
       `${budgetTokens ? `, budget=${budgetTokens}` : ""})...\n`,
   );
 
@@ -328,6 +329,7 @@ async function cmdRite(args: string[]): Promise<void> {
   const result = await performRite({
     task,
     packSize,
+    revisions,
     scanGlobs,
     cwd: w.root,
     hoard: w.hoard,
@@ -375,6 +377,10 @@ function formatRiteStep(s: RiteStep): string {
       return `  gremlins running chaos pass...`;
     case "chaos:done":
       return `    gremlin → ${s.gremlinId} (on goblin ${s.goblinId})`;
+    case "revision:start":
+      return `  goblins revising drafts (round ${s.round})...`;
+    case "revision:done":
+      return `    revised goblin → ${s.goblinId}`;
     case "review:start":
       return `  troll reviewing...`;
     case "review:verdict":

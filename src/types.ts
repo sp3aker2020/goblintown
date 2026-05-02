@@ -88,6 +88,7 @@ export interface Rite {
   contextLootId?: string;
   goblinLootIds: string[];
   chaosLootIds: Record<string, string>;
+  revisionLootIds: Record<string, string>;
   trollVerdicts: Record<string, TrollVerdict>;
   ogreLootId?: string;
   winnerLootId?: string;

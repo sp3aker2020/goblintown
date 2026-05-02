@@ -7,6 +7,7 @@ import { callCreature } from "./openai-client.js";
 import { shinies, informedShinies } from "./reward.js";
 import { scavenge } from "./scavenge.js";
 import { chaosPass } from "./chaos.js";
+import { reviseGoblin } from "./revise.js";
 import { packVariant } from "./pack-prompt.js";
 import { trollReview } from "./troll-review.js";
 import { ogreFallback } from "./fallback.js";
@@ -22,6 +23,7 @@ import type { RewardFn } from "./reward-plugin.js";
 export interface RiteOptions {
   task: string;
   packSize: number;
+  revisions?: number;
   scanGlobs?: string[];
   cwd: string;
   hoard: Hoard;
@@ -40,6 +42,8 @@ export type RiteStep =
   | { kind: "pack:goblin"; lootId: string; index: number }
   | { kind: "chaos:start" }
   | { kind: "chaos:done"; goblinId: string; gremlinId: string }
+  | { kind: "revision:start"; round: number }
+  | { kind: "revision:done"; goblinId: string }
   | { kind: "review:start" }
   | { kind: "review:verdict"; verdict: TrollVerdict }
   | { kind: "fallback:start" }
@@ -67,6 +71,7 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
     personality,
     goblinLootIds: [],
     chaosLootIds: {},
+    revisionLootIds: {},
     trollVerdicts: {},
     outcome: "all_failed",
     startedAt,
@@ -183,17 +188,85 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
     budget.charge(cl.usage);
   }
 
+  const revisionsCount = opts.revisions ?? 0;
+  let currentGoblinLoot = [...goblinLoot];
+  let currentChaosByGoblinId = chaosByGoblinId;
+
+  for (let rev = 0; rev < revisionsCount; rev++) {
+    onStep({ kind: "revision:start", round: rev + 1 });
+    if (!checkBudget("revision")) {
+      rite.finishedAt = Date.now();
+      await opts.hoard.stashRite(rite);
+      onStep({ kind: "rite:done", outcome: rite.outcome });
+      throw new BudgetExceededError(budget.used, opts.budgetTokens ?? 0);
+    }
+
+    const reviseJobs = currentGoblinLoot.map(async (g) => {
+      const c = currentChaosByGoblinId.get(g.id);
+      if (!c) return g;
+      const r = await reviseGoblin({
+        goblinLoot: g,
+        chaosLoot: c,
+        originalTask: opts.task,
+        hoard: opts.hoard,
+        riteId,
+        revisionIndex: rev,
+        personality: opts.personality,
+      });
+      onStep({ kind: "revision:done", goblinId: r.id });
+      return r;
+    });
+
+    currentGoblinLoot = await Promise.all(reviseJobs);
+    for (const g of currentGoblinLoot) budget.charge(g.usage);
+    for (const g of currentGoblinLoot) {
+      rite.revisionLootIds[g.id] = g.id;
+      allLoot.push(g);
+    }
+
+    // Run chaos again on the revised drafts
+    onStep({ kind: "chaos:start" });
+    if (!checkBudget("chaos")) {
+      rite.finishedAt = Date.now();
+      await opts.hoard.stashRite(rite);
+      onStep({ kind: "rite:done", outcome: rite.outcome });
+      throw new BudgetExceededError(budget.used, opts.budgetTokens ?? 0);
+    }
+
+    const nextChaosJobs = currentGoblinLoot.map(async (g) => {
+      const c = await chaosPass({
+        goblinLoot: g,
+        originalTask: opts.task,
+        hoard: opts.hoard,
+        riteId,
+        personality: opts.personality,
+      });
+      onStep({ kind: "chaos:done", goblinId: g.id, gremlinId: c.id });
+      return [g.id, c] as const;
+    });
+
+    const nextChaosResults = await Promise.all(nextChaosJobs);
+    currentChaosByGoblinId = new Map<string, Loot>();
+    for (const [gid, cl] of nextChaosResults) {
+      rite.chaosLootIds[gid] = cl.id;
+      currentChaosByGoblinId.set(gid, cl);
+      allLoot.push(cl);
+      budget.charge(cl.usage);
+    }
+  }
+
   // sequential so console output stays in pack order
   onStep({ kind: "review:start" });
   const customRewardFn = opts.rewardFn;
-  for (const g of goblinLoot) {
+  for (const g of currentGoblinLoot) {
     if (!checkBudget("review")) break;
     const { verdict, trollLoot, chaosClassification } = await trollReview({
       goblinLoot: g,
       originalTask: opts.task,
-      chaosLoot: chaosByGoblinId.get(g.id),
+      chaosLoot: currentChaosByGoblinId.get(g.id),
       hoard: opts.hoard,
       riteId,
+      personality: opts.personality,
     });
     budget.charge(trollLoot.usage);
     rite.trollVerdicts[g.id] = verdict;
@@ -206,7 +279,7 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
     onStep({ kind: "review:verdict", verdict });
   }
 
-  const passed = goblinLoot.filter((g) => rite.trollVerdicts[g.id]?.passed);
+  const passed = currentGoblinLoot.filter((g) => rite.trollVerdicts[g.id]?.passed);
   let winnerLoot: Loot;
 
   if (passed.length > 0) {

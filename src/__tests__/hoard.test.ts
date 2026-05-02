@@ -116,6 +116,7 @@ describe("Hoard", () => {
       personality: "nerdy",
       goblinLootIds: [],
       chaosLootIds: {},
+      revisionLootIds: {},
       trollVerdicts: {},
       outcome: "all_failed",
       startedAt: 0,

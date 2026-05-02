@@ -106,6 +106,7 @@ describe("SqliteHoardBackend", () => {
       personality: "nerdy",
       goblinLootIds: [],
       chaosLootIds: {},
+      revisionLootIds: {},
       trollVerdicts: {},
       outcome: "winner",
       startedAt: 1,

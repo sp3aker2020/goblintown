@@ -76,6 +76,7 @@ async function buildRite(id: string, task: string): Promise<Rite> {
     personality: "nerdy",
     goblinLootIds: [goblinId],
     chaosLootIds: {},
+    revisionLootIds: {},
     trollVerdicts: {
       [goblinId]: {
         lootId: goblinId,
